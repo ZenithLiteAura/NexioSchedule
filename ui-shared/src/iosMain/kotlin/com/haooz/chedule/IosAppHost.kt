@@ -49,7 +49,10 @@ import com.haooz.chedule.ui.utils.LocalHostOverlays
 import com.haooz.chedule.ui.utils.LocalNativeDocumentChrome
 import com.haooz.chedule.ui.utils.NativeDocumentAction
 import com.haooz.chedule.ui.utils.NativeDocumentChrome
+import com.haooz.chedule.ui.utils.THEME_MODE_DARK
+import com.haooz.chedule.ui.utils.THEME_MODE_LIGHT
 import com.haooz.chedule.ui.utils.isAppDarkTheme
+import com.haooz.chedule.ui.utils.readThemeModePref
 import com.haooz.chedule.ui.utils.rememberScreenCornerRadiiPx
 import platform.UIKit.UIViewController
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -355,6 +358,15 @@ class IosAppHost {
 
     /** System appearance comes from SwiftUI above all app and wallpaper style overrides. */
     fun updateSystemDarkTheme(isDark: Boolean) {
+        // 首帧前先按已保存的主题把原生 chrome 播好种：固定深/浅色的用户冷启动时，
+        // UITabBar 与导航栏不会先闪一下系统色。之后的页面/壁纸覆盖仍以 navigation.isDark 为准。
+        if (systemDarkTheme == null) {
+            navigation.isDark = when (readThemeModePref()) {
+                THEME_MODE_DARK -> true
+                THEME_MODE_LIGHT -> false
+                else -> isDark
+            }
+        }
         systemDarkTheme = isDark
     }
 
@@ -685,6 +697,7 @@ internal fun AppRoute.nativeDocumentTitle(): String? = when (this) {
     AppRoute.UpdatePreferences -> ChromeStr.updatePreferencesTitle()
     AppRoute.AiImport -> ChromeStr.aiImport()
     AppRoute.WidgetIntro -> ChromeStr.widgetsTitle()
+    AppRoute.AiFeatures -> SettingsStr.aiFeatures()
     AppRoute.CourseReminder -> ChromeStr.courseReminders()
     AppRoute.HolidaySettings -> ChromeStr.holidaysTitle()
     AppRoute.WebDavSettings -> ChromeStr.webdavBackup()
@@ -694,6 +707,10 @@ internal fun AppRoute.nativeDocumentTitle(): String? = when (this) {
     AppRoute.CourseTimeSettings -> ChromeStr.classTimeSettings()
     // 网页导入页与选择页同级：必须是原生文档（走 Compose 栈会被原生文档挡住）
     AppRoute.WebImport -> ChromeStr.webImport()
+    // AI 教务导入同样是原生文档页（内含 WKWebView）
+    AppRoute.AiEduImport -> ChromeStr.aiEduImport()
+    AppRoute.AiEduImportHistory -> ImportStr.aiEduHistoryTitle()
+    AppRoute.AiEduPreview -> ImportStr.aiEduPreviewTitle()
     // ⚠ 必须是原生文档：从「课表导出/导入/备份」这些原生文档页跳进来，
     // 走 Compose 栈会被上面压着的原生文档挡住（表现为「点了没反应」）
     AppRoute.EducationalImport -> ChromeStr.educationalImport()

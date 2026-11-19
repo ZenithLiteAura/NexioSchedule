@@ -51,6 +51,7 @@ import com.haooz.chedule.data.platform.NexioLog
 import com.haooz.chedule.data.platform.ioDispatcher
 import com.haooz.chedule.data.platform.showToast
 import com.haooz.chedule.data.repo.CourseRepository
+import com.haooz.chedule.data.school.AiDockRepository
 import com.haooz.chedule.data.school.ScriptRepository
 import com.haooz.chedule.data.storage.AppStorage
 import com.haooz.chedule.data.storage.getStringOrNull
@@ -81,13 +82,15 @@ import com.haooz.softglass.backdrop.backdrops.layerBackdrop
 import com.haooz.softglass.backdrop.backdrops.rememberLayerBackdrop
 import com.haooz.softglass.shape.ContinuousCapsule
 import com.haooz.softglass.shape.ContinuousRoundedRectangle
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.InputField
@@ -123,6 +126,8 @@ fun EducationalImportScreen(
      * ⚠ 由路由层注入而非页内读 `LocalAppRouter`：iOS 原生文档页容器不 provide 它，默认值会抛 error。
      */
     onOpenWebImport: () -> Unit,
+    /** 打开 AI 教务导入（模型现场写适配脚本）。同样由路由层注入。 */
+    onOpenAiImport: () -> Unit = {},
 ) {
     val courseViewModel = courseViewModel()
     val scheduleViewModel = scheduleViewModel()
@@ -260,13 +265,14 @@ fun EducationalImportScreen(
                         scrollBehavior = scrollBehavior,
                         searchQuery = searchQuery,
                         selectedTab = selectedTab,
-                        topContentPadding = contentTopInset + topBarHeightDp + 100.dp,
+                        topContentPadding = contentTopInset + topBarHeightDp + 104.dp,
                         liquidGlassBackdrop = liquidGlassBackdrop,
                         onAdapterSelected = { school, adapter ->
                             // 选中项经 EduImportSelection 带给独立路由（右侧推入），返回先回本页
                             EduImportSelection.set(school, adapter)
                             onOpenWebImport()
-                        }
+                        },
+                        onOpenAiImport = onOpenAiImport,
                     )
                 }
             }
@@ -771,9 +777,17 @@ object EduImportUpdater {
         isUpdating.value = true
         updateScope.launch {
             try {
-                ScriptRepository(ScriptRepository.getRepoUrl()).updateAll(
-                    onLog = { }
-                )
+                // 拾光（pb）与 AI 仓库（JSON）互不依赖，并发拉取，失败也不互相牵连
+                coroutineScope {
+                    val scripts = async {
+                        ScriptRepository(ScriptRepository.getRepoUrl()).updateAll(onLog = { })
+                    }
+                    val aiDock = async {
+                        runCatching { AiDockRepository.shared.updateIndex() }.getOrDefault(-1)
+                    }
+                    scripts.await()
+                    aiDock.await()
+                }
                 prefs.edit { putLong(KEY_LAST_UPDATE_TIME, Clock.System.now().toEpochMilliseconds()) }
             } catch (e: Exception) {
                 NexioLog.e(TAG, ImportStr.logUpdateFailed(e.message))
@@ -789,9 +803,16 @@ object EduImportUpdater {
         isUpdating.value = true
         updateScope.launch {
             try {
-                val result = ScriptRepository(ScriptRepository.getRepoUrl()).updateAll(
-                    onLog = { }
-                )
+                // 两个仓库并发拉取；-1 < 0 < 1，取较大值即可得出「更新/最新/全失败」
+                val result = coroutineScope {
+                    val scripts = async {
+                        ScriptRepository(ScriptRepository.getRepoUrl()).updateAll(onLog = { })
+                    }
+                    val aiDock = async {
+                        runCatching { AiDockRepository.shared.updateIndex() }.getOrDefault(-1)
+                    }
+                    maxOf(scripts.await(), aiDock.await())
+                }
                 val msg = when (result) {
                     0 -> ImportStr.alreadyLatest()
                     1 -> ImportStr.updateComplete()

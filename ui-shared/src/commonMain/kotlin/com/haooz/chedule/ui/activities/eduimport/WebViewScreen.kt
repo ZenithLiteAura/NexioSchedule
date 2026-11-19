@@ -1,5 +1,5 @@
 /** WebView 页面 - 用于加载教务系统网页 */
-package com.haooz.chedule.ui.screens
+package com.haooz.chedule.ui.activities.eduimport
 
 // ⚠ 本文件不得出现 android.* / androidx.activity / androidx.core；
 // 需要新能力就往 WebHost 契约上加方法，而不是把平台类型带进来。
@@ -60,7 +60,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.haooz.chedule.data.model.Course
 import com.haooz.chedule.data.platform.showToast
-import com.haooz.chedule.data.school.SchoolData
+import com.haooz.chedule.data.school.AdapterData
 import com.haooz.chedule.data.school.ScriptRepository
 import com.haooz.chedule.i18n.AppLanguage
 import com.haooz.chedule.i18n.CommonStr
@@ -133,10 +133,20 @@ private data class SelectionData(
 
 @Composable
 fun WebViewScreen(
-    school: SchoolData,
+    /**
+     * 学校名。**不再是 `SchoolData`**：AI 教务导入没有「学校/适配器」这个概念，
+     * 它拿到的只是一个用户填的地址。这里拆成纯字符串，两种来源都能用。
+     */
+    schoolName: String,
+    /** 脚本资源目录（AI 场景为空串：没有现成适配脚本） */
+    resourceFolder: String,
     adapterId: String,
     importUrl: String?,
     assetJsPath: String?,
+    /** 适配器来源：拾光 / AI 仓库，决定脚本从哪里下载 */
+    adapterSource: Int = AdapterData.SOURCE_SHUIGUANG,
+    /** 是否注入页面网络记录器（只有 AI 教务导入需要） */
+    netRecorderEnabled: Boolean = false,
     webContentBackdrop: LayerBackdrop,
     contentTopPadding: Dp = 0.dp,
     scheduleNames: List<String> = emptyList(),
@@ -150,6 +160,24 @@ fun WebViewScreen(
     onReloadRef: ((() -> Unit) -> Unit)? = null,
     /** 网页宿主工厂：Android 注入 `AndroidWebHost`，桌面/iOS 用 [NoopWebHost]。 */
     webHostFactory: @Composable (WebHostConfig, WebHostEvents) -> WebHost = { _, _ -> NoopWebHost },
+    // ── 底部悬浮条的外观与动作（默认值 = 原「执行导入」行为，AI 教务导入会覆盖） ──
+    /** 悬浮条主标题，默认就是学校名 */
+    dockTitle: String = schoolName,
+    /** 悬浮条副标题；null 用「点击下方按钮执行导入」那套原话 */
+    dockSubtitle: String? = null,
+    /** 主按钮文字；非 null 时渲染成药丸文字按钮，null 保持原来的下载图标 */
+    primaryActionText: String? = null,
+    /** 主按钮可用性；null = 沿用「有没有适配脚本」的原判据 */
+    primaryActionEnabled: Boolean? = null,
+    /** 主按钮动作；null = 沿用原「执行导入」 */
+    onPrimaryAction: (() -> Unit)? = null,
+    /**
+     * 宿主创建好后回调一次。
+     *
+     * AI 教务导入的 agent 要在同一台 WebView 上跑工具，但它拿不到这里 remember 出来的宿主 ——
+     * 与其让外层再构造一份 config（两处必然漂移），不如在这里把实例交出去。
+     */
+    onHostReady: (WebHost) -> Unit = {},
 ) {
     val isTablet = isTabletWidth()
     // iOS 原生文档页把底部悬浮条交给系统控件，本页不再画 Compose 胶囊；Android / 桌面没有 chrome。
@@ -169,10 +197,10 @@ fun WebViewScreen(
     val currentOnTopColorChanged by rememberUpdatedState(onTopColorChanged)
 
     // 进入页面时按需预下载适配脚本，失败不阻塞页面
-    LaunchedEffect(school.resourceFolder, assetJsPath) {
+    LaunchedEffect(resourceFolder, assetJsPath, adapterSource) {
         val path = assetJsPath ?: return@LaunchedEffect
         ScriptRepository(ScriptRepository.getRepoUrl())
-            .ensureScript(school.resourceFolder, path)
+            .ensureScript(resourceFolder, path, adapterSource)
     }
 
     var alertData by remember { mutableStateOf<AlertData?>(null) }
@@ -280,19 +308,22 @@ fun WebViewScreen(
         WebHostConfig(
             importUrl = importUrl,
             assetJsPath = assetJsPath,
-            resourceFolder = school.resourceFolder,
+            resourceFolder = resourceFolder,
             isDesktopMode = isDesktopMode,
             // iOS：顶部让位交给系统安全区，Compose 不推 WebView
             contentTopPadding = if (nativeChrome != null) 0.dp else contentTopPadding,
             // 原生底栏时给网页留出高度；Android 走自己的布局
             contentBottomPadding = if (nativeChrome != null) bottomBarHeight else 0.dp,
             // 鸿蒙：网页是 ArkUI 节点、底部条也由原生画，这两个值要带过去
-            schoolName = school.name,
+            schoolName = schoolName,
             scheduleNames = scheduleNames,
             currentScheduleName = currentScheduleName,
+            netRecorderEnabled = netRecorderEnabled,
         ),
         webHostEvents,
     )
+    val currentOnHostReady by rememberUpdatedState(onHostReady)
+    LaunchedEffect(webHost) { currentOnHostReady(webHost) }
     // Alert 对话框
     alertData?.let { data ->
         WebAlertDialog(
@@ -329,7 +360,8 @@ fun WebViewScreen(
         )
     }
 
-    val onExecuteImport: () -> Unit = {
+    val primaryEnabled = primaryActionEnabled ?: (assetJsPath != null)
+    val onExecuteImport: () -> Unit = onPrimaryAction ?: {
         if (assetJsPath != null) {
             showCourseTablePicker = true
         } else {
@@ -341,14 +373,14 @@ fun WebViewScreen(
     NativeDocumentBottomBarEffect(
         if (nativeChrome != null) {
             NativeDocumentBottomBar(
-                title = school.name,
-                subtitle = SchedStr.webImportSubtitle(),
+                title = dockTitle,
+                subtitle = dockSubtitle ?: SchedStr.webImportSubtitle(),
                 badge = if (isDesktopMode) SchedStr.desktopMode() else SchedStr.mobileMode(),
                 toggleSymbol = "rectangle.on.rectangle",
                 toggleLabel = SchedStr.toggleDesktopMode(),
                 primarySymbol = "square.and.arrow.down",
-                primaryLabel = SchedStr.runImport(),
-                primaryEnabled = assetJsPath != null,
+                primaryLabel = primaryActionText ?: SchedStr.runImport(),
+                primaryEnabled = primaryEnabled,
                 onToggle = { isDesktopMode = !isDesktopMode },
                 onPrimary = onExecuteImport,
             )
@@ -361,7 +393,7 @@ fun WebViewScreen(
         assetJsPath?.let { path ->
             scope.launch {
                 val scriptFile = ScriptRepository(ScriptRepository.getRepoUrl())
-                    .ensureScript(school.resourceFolder, path)
+                    .ensureScript(resourceFolder, path, adapterSource)
                 if (scriptFile != null) {
                     val jsCode = scriptFile.readText()
                     webHost.setImportTableId(tableId)
@@ -429,7 +461,7 @@ fun WebViewScreen(
                 .background(MiuixTheme.colorScheme.surface)
                 // 无材质档：底部胶囊玻璃全关，页面采样录屏层不挂
                 .then(
-                    if (com.haooz.chedule.ui.utils.AppMaterialSettings.isNoneTier()) Modifier
+                    if (AppMaterialSettings.isNoneTier()) Modifier
                     else Modifier.layerBackdrop(webContentBackdrop)
                 )
         ) {
@@ -501,7 +533,9 @@ fun WebViewScreen(
                     )
             ) {
                 WebImportDockContent(
-                    schoolName = school.name,
+                    title = dockTitle,
+                    subtitle = dockSubtitle ?: SchedStr.webImportSubtitle(),
+                    primaryText = primaryActionText,
                     isDesktopMode = isDesktopMode,
                     onToggleDesktopMode = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.VirtualKey)
@@ -511,7 +545,7 @@ fun WebViewScreen(
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
                         onExecuteImport()
                     },
-                    importEnabled = assetJsPath != null
+                    importEnabled = primaryEnabled
                 )
             }
         }
@@ -520,7 +554,10 @@ fun WebViewScreen(
 
 @Composable
 private fun WebImportDockContent(
-    schoolName: String,
+    title: String,
+    subtitle: String,
+    /** 非 null 时用文字胶囊代替右下角的下载图标（AI 教务导入的「AI 分析」） */
+    primaryText: String?,
     isDesktopMode: Boolean,
     onToggleDesktopMode: () -> Unit,
     onExecuteImport: () -> Unit,
@@ -537,7 +574,7 @@ private fun WebImportDockContent(
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = schoolName,
+                    text = title,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.onSurface,
@@ -569,9 +606,11 @@ private fun WebImportDockContent(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = SchedStr.webImportSubtitle(),
+                text = subtitle,
                 fontSize = 12.sp,
-                color = MiuixTheme.colorScheme.onSurfaceVariantActions
+                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
@@ -596,27 +635,55 @@ private fun WebImportDockContent(
                 }
             }
 
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = ContinuousRoundedRectangle(22.dp),
-                color = if (importEnabled)
-                    MiuixTheme.colorScheme.primary
-                else
-                    MiuixTheme.colorScheme.surfaceVariant
-            ) {
-                IconButton(
-                    onClick = onExecuteImport,
-                    enabled = importEnabled
+            if (primaryText != null) {
+                // 文字胶囊：AI 场景的语义是「开始分析」，一个下载图标说不清
+                Surface(
+                    shape = ContinuousRoundedRectangle(22.dp),
+                    color = if (importEnabled)
+                        MiuixTheme.colorScheme.primary
+                    else
+                        MiuixTheme.colorScheme.surfaceVariant
                 ) {
-                    Icon(
-                        MiuixIcons.Normal.Download,
-                        contentDescription = SchedStr.runImport(),
-                        modifier = Modifier.size(26.dp),
-                        tint = if (importEnabled)
-                            MiuixTheme.colorScheme.onPrimary
-                        else
-                            MiuixTheme.colorScheme.onSurfaceVariantActions
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clickable(enabled = importEnabled) { onExecuteImport() }
+                            .padding(horizontal = 18.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = primaryText,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (importEnabled)
+                                MiuixTheme.colorScheme.onPrimary
+                            else
+                                MiuixTheme.colorScheme.onSurfaceVariantActions
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = ContinuousRoundedRectangle(22.dp),
+                    color = if (importEnabled)
+                        MiuixTheme.colorScheme.primary
+                    else
+                        MiuixTheme.colorScheme.surfaceVariant
+                ) {
+                    IconButton(
+                        onClick = onExecuteImport,
+                        enabled = importEnabled
+                    ) {
+                        Icon(
+                            MiuixIcons.Normal.Download,
+                            contentDescription = SchedStr.runImport(),
+                            modifier = Modifier.size(26.dp),
+                            tint = if (importEnabled)
+                                MiuixTheme.colorScheme.onPrimary
+                            else
+                                MiuixTheme.colorScheme.onSurfaceVariantActions
+                        )
+                    }
                 }
             }
         }

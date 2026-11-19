@@ -86,7 +86,7 @@ import com.haooz.chedule.ui.utils.isAppDarkTheme
 import com.haooz.softglass.backdrop.backdrops.LayerBackdrop
 import com.haooz.softglass.backdrop.backdrops.layerBackdrop as liquidGlassLayerBackdrop
 import com.haooz.softglass.shape.ContinuousRoundedRectangle
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -1285,7 +1285,8 @@ fun TimeConfigEditScreen(
                                         "long_evening" -> eveningSections
                                         else -> 4
                                     }
-                                    val sectionRange = 1 until sectionCount
+                                    // 该时段只有 0/1 节时 1 until n 是空区间
+                                    val sectionRange = 1..maxOf(1, sectionCount - 1)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.Center,

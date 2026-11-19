@@ -71,8 +71,10 @@ kotlin {
             implementation(compose.material3)
             // 必须 api：Res / painterResource 被 :androidApp 直接引用
             api(compose.components.resources)
+            // 开机引导播放小米原版 Lottie 素材
+            implementation(libs.compottie)
             // 柔光玻璃档位与材质口径
-            api("com.github.HaoZai000.softglass:softglass:0.1.1")
+            api("com.github.HaoZai000.softglass:softglass:0.1.2")
             // 数据层与跨平台抽象
             api(project(":core"))
             // 页面骨架与组件
@@ -93,6 +95,20 @@ kotlin {
             implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel:2.9.6")
             // viewModel() 工厂在单独 artifact；默认工厂只认无参构造，各 VM 保持无参
             implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.9.6")
+        }
+    }
+}
+
+// Android 分享卡片读的是 :androidApp 的 assets/share_card_template.png，
+// composeResources 里这份只给 iOS / 鸿蒙用，从 Android 资源拷贝里剔掉，省一份 34 KB。
+tasks.configureEach {
+    if (name == "copyAndroidMainComposeResourcesToAndroidAssets") {
+        doLast {
+            outputs.files.files.forEach { dir ->
+                dir.resolve(
+                    "composeResources/com.haooz.chedule.uishared.resources/drawable/share_card_template.png"
+                ).delete()
+            }
         }
     }
 }

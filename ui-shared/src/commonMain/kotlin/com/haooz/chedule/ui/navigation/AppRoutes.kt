@@ -7,12 +7,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -95,8 +93,13 @@ import com.haooz.chedule.i18n.ChromeStr
 import com.haooz.chedule.i18n.CommonStr
 import com.haooz.chedule.i18n.FeedbackStr
 import com.haooz.chedule.i18n.HolidayStr
+import com.haooz.chedule.i18n.ImportStr
+import com.haooz.chedule.i18n.SettingsStr
 import com.haooz.chedule.i18n.WeatherStr
 import com.haooz.chedule.ui.activities.AboutScreen
+import com.haooz.chedule.ui.activities.eduimport.AiEduImportScreen
+import com.haooz.chedule.ui.activities.eduimport.AiEduImportHistoryScreen
+import com.haooz.chedule.ui.activities.eduimport.AiEduPreviewScreen
 import com.haooz.chedule.ui.activities.AiImportScreen
 import com.haooz.chedule.ui.activities.AppreciateAuthorScreen
 import com.haooz.chedule.ui.activities.BackupAndMigrationScreen
@@ -127,7 +130,7 @@ import com.haooz.chedule.ui.activities.UpdatePreferencesScreen
 import com.haooz.chedule.ui.activities.UpdateSettingsScreen
 import com.haooz.chedule.ui.activities.WebDavBottomActionState
 import com.haooz.chedule.ui.activities.WebDavSettingsScreen
-import com.haooz.chedule.ui.activities.WebImportScreen
+import com.haooz.chedule.ui.activities.eduimport.WebImportScreen
 import com.haooz.chedule.ui.activities.WidgetCustomizeOverlay
 import com.haooz.chedule.ui.activities.WidgetCustomizeRequest
 import com.haooz.chedule.ui.activities.WidgetIntroScreen
@@ -152,6 +155,7 @@ import com.haooz.chedule.ui.components.text.material.Text as Text
 import com.haooz.chedule.ui.effects.motion.MORPH_BACKGROUND_SHRINK
 import com.haooz.chedule.ui.effects.motion.OobeCubicOutEasing
 import com.haooz.chedule.ui.effects.motion.OobeQuartOutEasing
+import com.haooz.chedule.ui.screens.AiFeaturesScreen
 import com.haooz.chedule.ui.screens.CourseEditScreen
 import com.haooz.chedule.ui.screens.ScheduleSettingsScreen
 import com.haooz.chedule.ui.screens.SettingsSearchHeader
@@ -330,7 +334,60 @@ fun EducationalImportRoute(
         onFinish = { router.popBack() },
         // 用路由自己的 router（不用 LocalAppRouter：iOS 原生文档页容器不 provide 它）
         onOpenWebImport = { router.navigate(AppRoute.WebImport) },
+        onOpenAiImport = { router.navigate(AppRoute.AiEduImport) },
     )
+}
+
+/**
+ * AI 教务导入路由：模型自己读页面 / 打接口 / 写适配脚本。
+ *
+ * 网页宿主与 [WebImportRoute] 同一个契约（[WebHost]），区别是没有现成适配脚本：
+ * 脚本由模型现场生成，执行前被沙箱接住，课程一律走本地预览确认。
+ */
+@Composable
+fun AiEduImportRoute(
+    router: AppRouter,
+    webHostFactory: @Composable (WebHostConfig, WebHostEvents) -> WebHost,
+) {
+    AiEduImportScreen(
+        webHostFactory = webHostFactory,
+        onBack = { router.popBack() },
+        onOpenHistory = { router.navigate(AppRoute.AiEduImportHistory) },
+        onOpenPreview = { router.navigate(AppRoute.AiEduPreview) },
+        // 选中项已由 AI 页写入 EduImportSelection，这里只负责推入现有适配器导入页
+        onOpenAdapterImport = { router.navigate(AppRoute.WebImport) },
+    )
+}
+
+/**
+ * AI 教务导入的课程预览：确认写入后，预览页与 AI 导入页一起收掉。
+ *
+ * 草稿没有参数通道，经 `AiEduPreviewHolder` 带进来（出栈时清空）。
+ */
+@Composable
+fun AiEduPreviewRoute(router: AppRouter) {
+    DocumentPageScaffold(
+        title = ImportStr.aiEduPreviewTitle(),
+        onBack = { router.popBack() },
+    ) { scrollBehavior, backdrop ->
+        AiEduPreviewScreen(
+            onImported = {
+                // 先退预览页，再退 AI 导入页
+                router.popBack()
+                router.popBack()
+            },
+            scrollBehavior = scrollBehavior,
+            liquidGlassBackdrop = backdrop,
+        )
+    }
+}
+
+/** AI 教务导入历史：AI 写过的每一版脚本。 */
+@Composable
+fun AiEduImportHistoryRoute(router: AppRouter) {
+    DocumentRoute(title = ImportStr.aiEduHistoryTitle(), router = router) { scrollBehavior ->
+        AiEduImportHistoryScreen(scrollBehavior = scrollBehavior)
+    }
 }
 
 /**
@@ -1303,6 +1360,25 @@ fun WidgetIntroRoute(
                 onPickWallpaper = onPickWidgetWallpaper,
             )
         }
+    }
+}
+
+/**
+ * AI 功能路由：免费额度、自带服务商设置与各功能入口。
+ */
+@Composable
+fun AiFeaturesRoute(router: AppRouter) {
+    DocumentPageScaffold(
+        title = SettingsStr.aiFeatures(),
+        onBack = { router.popBack() },
+    ) { scrollBehavior, backdrop ->
+        AiFeaturesScreen(
+            scrollBehavior = scrollBehavior,
+            liquidGlassBackdrop = backdrop,
+            onOpenReminder = { router.navigate(AppRoute.CourseReminder) },
+            onOpenEduImport = { router.navigate(AppRoute.AiEduImport) },
+            onOpenTextImport = { router.navigate(AppRoute.AiImport) },
+        )
     }
 }
 

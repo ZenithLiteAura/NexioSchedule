@@ -1025,7 +1025,7 @@ fun CourseReminderScreen(
                             ),
                         )
 
-                        // 课中岛缩略态右侧：与课前岛的左右两侧互不干扰
+                        // 课中岛缩略态右侧：小米超级岛已固定「正在上课 + 倒计时」，仅 iOS 灵动岛还用这个选项
                         val islandInClassRightOptions = listOf(
                             DropdownItem(
                                 text = ReminderStr.inClassNow(),
@@ -1078,9 +1078,9 @@ fun CourseReminderScreen(
                                     liquidGlassBackdrop = liquidGlassBackdrop,
                                     dropdownColors = liquidGlassDropdownColors,
                                 )
-                                CardExpand(visible = inClassEnabled || !isHyperIsland) {
+                                CardExpand(visible = !isHyperIsland) {
                                     OverlayDropdownMenu(
-                                        title = if (isHyperIsland) ReminderStr.inClassIslandRight() else ReminderStr.inClassDynamicIslandRight(),
+                                        title = ReminderStr.inClassDynamicIslandRight(),
                                         entry = DropdownEntry(items = islandInClassRightOptions),
                                         collapseOnSelection = true,
                                         liquidGlassBackdrop = liquidGlassBackdrop,
@@ -1819,6 +1819,8 @@ fun CourseReminderScreen(
                             onClick = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
                                 val start = tempStartSection.coerceIn(1, totalSections)
+                                // 选到最后一节即「全部节次」（存 0 = 不限），与列表里的文案一致；
+                                // 存真实节数的话，日后调大总节数会把它变成「只到第 N 节」
                                 val end = tempEndSection
                                     .coerceIn(start, totalSections)
                                     .let { if (it >= totalSections) 0 else it }
