@@ -22,15 +22,10 @@ data class AiProviderPreset(
 
 object AiProviders {
 
-    /** 不填 key，走 Nexio 每日免费额度 */
-    const val FREE = "free"
-
     /** 地址与模型都自己填 */
     const val CUSTOM = "custom"
 
     val presets: List<AiProviderPreset> = listOf(
-        AiProviderPreset(FREE, "Nexio", "", emptyList()),
-
         // https://api-docs.deepseek.com — V4.1 Flash 为默认，V4 Pro 为高配
         AiProviderPreset(
             "deepseek", "DeepSeek", "https://api.deepseek.com",
@@ -117,6 +112,4 @@ object AiProviders {
     /** 是否是「自己填地址与模型」的自定义服务商。 */
     fun isCustom(id: String): Boolean = id == CUSTOM
 
-    /** 是否是免费额度（不直连任何服务商）。 */
-    fun isFree(id: String): Boolean = id == FREE
 }

@@ -78,33 +78,12 @@ class AiEduAgentClient(
     ): AiResult<AiAgentReply> {
         if (messages.isEmpty()) return AiResult.Error("对话是空的")
 
-        // 用户自带服务商：直连，不经过我们的服务器
+        // 免费云端 AI 已移除：只走用户自己配置的服务商
         val byok = AiByokStore.load()
-        if (byok.isUsable) return AiDirectClient(http).turn(byok, messages, tools)
-
-        val body = buildJsonObject {
-            // 服务端按 device_id 计每日额度（与统计上报同一个 ID）
-            put("device_id", StatsReporter.ensureDeviceId())
-            if (!sessionId.isNullOrBlank()) put("session_id", sessionId)
-            put("messages", JsonArray(compactForWire(messages)))
-            put("tools", tools)
+        if (!byok.isUsable) {
+            return AiResult.Error("请先在「AI 功能」页填写模型服务商与 API key")
         }
-
-        val plain = when (val r = aiRoundTrip(http, "$baseUrl/agent", body)) {
-            is AiResult.Ok -> r.value
-            is AiResult.Error -> return r
-        }
-
-        val obj = runCatching { parseJsonObject(plain) }
-            .getOrElse { return AiResult.Error("服务端响应不是 JSON") }
-        if (!obj.optString("ok").toBoolean()) {
-            return AiResult.Error(obj.optString("error").ifEmpty { "服务端说这次没成" })
-        }
-
-        val message = obj.optJsonObject("message")
-            ?: return AiResult.Error("服务端没返回消息")
-        val remaining = obj.optInt("remaining", -1).takeIf { it >= 0 }
-        return AiResult.Ok(parseReply(message, remaining))
+        return AiDirectClient(http).turn(byok, messages, tools)
     }
 
     /**
@@ -124,74 +103,12 @@ class AiEduAgentClient(
     ): AiResult<AiAgentReply> {
         if (messages.isEmpty()) return AiResult.Error("对话是空的")
 
-        // 用户自带服务商：直连供应商的 SSE，不经过我们的服务器
+        // 免费云端 AI 已移除：只走用户自己配置的服务商
         val byok = AiByokStore.load()
-        if (byok.isUsable) return AiDirectClient(http).turnStream(byok, messages, tools, onEvent)
-
-        if (!AiServerKey.isConfigured()) return AiResult.Error("这个版本还没内置服务端公钥")
-
-        val envelope = try {
-            AiEnvelopeSession()
-        } catch (e: Exception) {
-            return AiResult.Error("加密会话创建失败：${e.describe()}")
+        if (!byok.isUsable) {
+            return AiResult.Error("请先在「AI 功能」页填写模型服务商与 API key")
         }
-
-        val body = buildJsonObject {
-            put("device_id", StatsReporter.ensureDeviceId())
-            if (!sessionId.isNullOrBlank()) put("session_id", sessionId)
-            put("messages", JsonArray(compactForWire(messages)))
-            put("tools", tools)
-        }
-        val payload = try {
-            envelope.sealRequest(body.toString())
-        } catch (e: Exception) {
-            return AiResult.Error("请求加密失败：${e.describe()}")
-        }
-
-        var failure: String? = null
-        var done: JsonObject? = null
-        var remaining: Int? = null
-
-        try {
-            http.streamPost("$baseUrl/agent/stream", payload) { line ->
-                val trimmed = line.trim()
-                if (!trimmed.startsWith("data:")) return@streamPost
-                val data = trimmed.removePrefix("data:").trim()
-                if (data.isEmpty()) return@streamPost
-
-                val chunk = runCatching { parseJsonObject(data) }.getOrNull() ?: return@streamPost
-                // 信封都解不开时服务端只能回明文 {"error":...}
-                if (chunk.optString("iv").isEmpty()) {
-                    failure = chunk.optString("error").ifEmpty { "服务端没有返回密文" }
-                    return@streamPost
-                }
-                val plain = runCatching { envelope.openChunk(chunk.optString("iv"), chunk.optString("ct")) }
-                    .getOrElse {
-                        failure = "响应解密失败：${it.describe()}"
-                        return@streamPost
-                    }
-                val event = runCatching { parseJsonObject(plain) }.getOrNull() ?: return@streamPost
-                when (event.optString("t")) {
-                    "reasoning" -> onEvent(AiAgentEvent.Reasoning(event.optString("x")))
-                    "content" -> onEvent(AiAgentEvent.Content(event.optString("x")))
-                    "done" -> {
-                        done = event.optJsonObject("message")
-                        val rem = event.optInt("remaining", -1)
-                        if (rem >= 0) remaining = rem
-                    }
-                    "error" -> failure = event.optString("error").ifEmpty { "服务端报错" }
-                }
-            }
-        } catch (e: CancellationException) {
-            // 「停止」是主动取消：不要把它翻译成一句「网络请求失败」再画到界面上
-            throw e
-        } catch (e: Exception) {
-            return AiResult.Error("网络请求失败：${e.describe()}")
-        }
-
-        failure?.let { return AiResult.Error(it) }
-        val message = done ?: return AiResult.Error("服务端没有给出结果")
-        return AiResult.Ok(parseReply(message, remaining))
+        return AiDirectClient(http).turnStream(byok, messages, tools, onEvent)
     }
 
     private fun parseReply(message: JsonObject, remaining: Int?): AiAgentReply {

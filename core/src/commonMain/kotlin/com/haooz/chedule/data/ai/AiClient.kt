@@ -15,25 +15,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** 云端 AI 能力概览。[tasks] 是服务端当前注册的任务名，App 据此决定露出哪些入口。 */
-data class AiCapabilities(
-    val enabled: Boolean,
-    val tasks: List<String>,
-    /** 该设备今天的免费额度；没带 device_id 或服务端没给时为 null */
-    val quota: AiQuota? = null,
-)
-
-/** 免费额度的今日用量（按设备）。 */
-data class AiQuota(
-    val shrinkUsed: Int,
-    val shrinkLimit: Int,
-    val agentUsed: Int,
-    val agentLimit: Int,
-) {
-    val shrinkRemaining: Int get() = (shrinkLimit - shrinkUsed).coerceAtLeast(0)
-    val agentRemaining: Int get() = (agentLimit - agentUsed).coerceAtLeast(0)
-}
-
 /**
  * AI 调用的结果。
  *
@@ -50,14 +31,10 @@ sealed class AiResult<out T> {
 /**
  * 云端 AI 客户端。
  *
- * ## 免费额度 / 自带服务商
+ * ## 自带服务商（BYOK）
  *
- * 默认所有请求都发给自己的服务器：apikey 只存服务端（加密落盘），App 从不接触，
- * 地址与模型都在服务端改，改完所有客户端立刻生效，不用发版。也因此 `/api/ai/task`
- * 只接受**预设任务**（prompt 模板在云端），不能拿它当通用 chat 代理。
- *
- * 用户在「AI 功能」页填了自己的服务商（BYOK）后，[shrinkLabels] 改走 [AiDirectClient]
- * 直连供应商：不占免费额度，key 只在本机，更不经过我们的服务器。
+ * 免费云端 AI 已移除：所有 AI 功能都必须由用户在「AI 功能」页填写自己的服务商，
+ * 请求由 [AiDirectClient] 直连供应商，key 只存本机，不经过任何中间服务器。
  *
  * ## 加密
  *
@@ -83,87 +60,12 @@ class AiClient(
             return AiResult.Error("课表里还没有课程名和地点")
         }
 
-        // 用户配了自己的服务商就直连，不占免费额度、也不经过我们的服务器
+        // 免费云端 AI 已移除：只走用户自己配置的服务商
         val byok = AiByokStore.load()
-        if (byok.isUsable) {
-            return AiDirectClient(http).shrinkLabels(classrooms = cleanRooms, courses = cleanCourses)
+        if (!byok.isUsable) {
+            return AiResult.Error("请先在「AI 功能」页填写模型服务商与 API key")
         }
-
-        val body = buildJsonObject {
-            put("task", TASK_SHRINK_CLASSROOMS)
-            // 服务端按这个 ID 算每天用量（与统计上报同一个 ID）
-            put("device_id", StatsReporter.ensureDeviceId())
-            put("args", buildJsonObject {
-                put("courses", buildJsonArray { cleanCourses.forEach { add(JsonPrimitive(it)) } })
-                put("classrooms", buildJsonArray { cleanRooms.forEach { add(JsonPrimitive(it)) } })
-            })
-        }
-
-        val plain = when (val r = roundTrip("$baseUrl/task", body)) {
-            is AiResult.Ok -> r.value
-            is AiResult.Error -> return r
-        }
-
-        val obj = runCatching { parseJsonObject(plain) }
-            .getOrElse { return AiResult.Error("服务端响应不是 JSON") }
-        if (!obj.optString("ok").toBoolean()) {
-            return AiResult.Error(obj.optString("error").ifEmpty { "服务端说这次没成" })
-        }
-        // lines 存在但为空是正常结果：课表里的楼名本来就短（「博105」「安503」），
-        // 没什么可缩的。这跟「服务端没给结果」要分开。
-        val lines = obj.optJsonObject("result")?.optJsonArray("lines")
-            ?: return AiResult.Error("服务端没返回对照表")
-
-        val pairs = lines.mapNotNull { element ->
-            val line = jsonToPlainValue(element) as? String ?: return@mapNotNull null
-            val sep = line.indexOf('=')
-            if (sep <= 0) return@mapNotNull null
-            val from = line.substring(0, sep).trim()
-            val to = line.substring(sep + 1).trim()
-            if (from.isEmpty() || to.isEmpty()) null else from to to
-        }
-        val remaining = obj.optInt("remaining", -1).takeIf { it >= 0 }
-        return AiResult.Ok(pairs, remaining)
-    }
-
-    /**
-     * 问服务端「AI 能不能用 + 今天这台设备还剩多少免费额度」。
-     *
-     * 与 [shrinkLabels] 共用加密通道；不消耗额度，只读。
-     */
-    suspend fun capabilities(): AiResult<AiCapabilities> {
-        val body = buildJsonObject {
-            put("device_id", StatsReporter.ensureDeviceId())
-        }
-        val plain = when (val r = roundTrip("$baseUrl/capabilities", body)) {
-            is AiResult.Ok -> r.value
-            is AiResult.Error -> return r
-        }
-        val obj = runCatching { parseJsonObject(plain) }
-            .getOrElse { return AiResult.Error("服务端响应不是 JSON") }
-        if (obj.optString("error").isNotEmpty()) {
-            return AiResult.Error(obj.optString("error"))
-        }
-        val tasks = obj.optJsonArray("tasks")?.mapNotNull { element ->
-            jsonToPlainValue(element) as? String
-        }.orEmpty()
-        val quota = obj.optJsonObject("quota")?.let { q ->
-            val shrink = q.optJsonObject("shrink") ?: return@let null
-            val agent = q.optJsonObject("agent") ?: return@let null
-            AiQuota(
-                shrinkUsed = shrink.optInt("used", 0),
-                shrinkLimit = shrink.optInt("limit", 0),
-                agentUsed = agent.optInt("used", 0),
-                agentLimit = agent.optInt("limit", 0),
-            )
-        }
-        return AiResult.Ok(
-            AiCapabilities(
-                enabled = obj.optString("enabled").toBoolean(),
-                tasks = tasks,
-                quota = quota,
-            )
-        )
+        return AiDirectClient(http).shrinkLabels(classrooms = cleanRooms, courses = cleanCourses)
     }
 
     /**
@@ -176,12 +78,6 @@ class AiClient(
         if (!cfg.isUsable) return AiResult.Error("服务商配置不完整")
         return AiDirectClient(http).ping(cfg)
     }
-
-    /**
-     * 发一次加密请求并解开响应 —— 具体实现在 [aiRoundTrip]（教务 agent 共用同一份）。
-     */
-    private suspend fun roundTrip(path: String, body: JsonObject): AiResult<String> =
-        aiRoundTrip(http, path, body)
 
     companion object {
         /** 与 `NoticeFetcher` / `StatsReporter` 等服务地址同源。 */

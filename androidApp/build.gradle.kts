@@ -33,8 +33,8 @@ android {
         applicationId = (findProperty("appId") as String?)?.takeIf { it.isNotBlank() } ?: "com.haooz.chedule"
         minSdk = 26
         targetSdk = 37
-        versionCode = 173
-        versionName = "1.7.3-1120"
+        versionCode = 174
+        versionName = "1.7.4-1119"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

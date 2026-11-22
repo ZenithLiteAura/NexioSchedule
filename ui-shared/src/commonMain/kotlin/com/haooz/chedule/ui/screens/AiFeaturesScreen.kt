@@ -36,13 +36,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.haooz.chedule.data.ai.AiByokConfig
 import com.haooz.chedule.data.ai.AiByokStore
-import com.haooz.chedule.data.ai.AiCapabilities
 import com.haooz.chedule.data.ai.AiClient
 import com.haooz.chedule.data.ai.AiProviders
 import com.haooz.chedule.data.ai.AiResult
 import com.haooz.chedule.data.platform.HttpTimeouts
 import com.haooz.chedule.data.platform.createHttpService
 import com.haooz.chedule.i18n.AiStr
+import com.haooz.chedule.i18n.McpStr
 import com.haooz.chedule.ui.basic.OverlayDropdownMenu
 import com.haooz.chedule.ui.components.CardExpand
 import com.haooz.chedule.ui.components.pageTopExtra
@@ -71,10 +71,10 @@ import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 /**
- * 「AI 功能」页：免费额度 + 自己的服务商（BYOK）+ 各功能入口。
+ * 「AI 功能」页：MCP 服务入口 + 自己的服务商（BYOK）+ 各功能入口。
  *
- * 额度来自服务端 `/api/ai/capabilities`（按本机 device_id 计）；BYOK 只改本机配置，
- * 开启后通知精简与教务导入都直连用户填的服务商，不再占用免费额度。
+ * 免费云端 AI 已移除：所有 AI 功能都需要用户填写自己的模型服务商，
+ * 请求直连供应商，API key 只保存在本机。
  *
  * 版式约定：卡片内部一律自己控 padding（`insideMargin = 0`），
  * 卡片之间统一用 [SECTION_GAP]；卡片内输入行用无边框的 [InlineInputRow]。
@@ -83,6 +83,7 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 fun AiFeaturesScreen(
     scrollBehavior: SharedScrollBehavior? = null,
     liquidGlassBackdrop: GlassBackdrop? = null,
+    onOpenMcp: () -> Unit = {},
     onOpenReminder: () -> Unit = {},
     onOpenEduImport: () -> Unit = {},
     onOpenTextImport: () -> Unit = {},
@@ -93,27 +94,9 @@ fun AiFeaturesScreen(
     val theme = MiuixTheme.colorScheme
 
     val http = remember { createHttpService(HttpTimeouts(connectSeconds = 10, readSeconds = 20)) }
-    var capabilities by remember { mutableStateOf<AiCapabilities?>(null) }
-    var quotaError by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var reloadKey by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(reloadKey) {
-        loading = true
-        quotaError = null
-        val result = runCatching { AiClient(http).capabilities() }
-            .getOrElse { AiResult.Error(it.message ?: AiStr.quotaUnavailable()) }
-        when (result) {
-            is AiResult.Ok -> capabilities = result.value
-            is AiResult.Error -> quotaError = result.message
-        }
-        loading = false
-    }
-
     val stored = remember { AiByokStore.load() }
     var provider by remember { mutableStateOf(stored.provider) }
     val providerPreset = AiProviders.byId(provider)
-    val isFreeProvider = AiProviders.isFree(provider)
     val isCustomProvider = AiProviders.isCustom(provider)
     var baseUrl by remember { mutableStateOf(stored.baseUrl) }
     var model by remember { mutableStateOf(stored.model) }
@@ -146,7 +129,7 @@ fun AiFeaturesScreen(
         AiByokStore.save(
             AiByokConfig(
                 provider = providerId,
-                enabled = !AiProviders.isFree(providerId),
+                enabled = true,
                 baseUrl = url,
                 model = modelName,
                 apiKey = key,
@@ -164,24 +147,11 @@ fun AiFeaturesScreen(
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
         testState = AiTestState.Running
         scope.launch {
-            testState = if (isFreeProvider) {
-                val outcome = runCatching { AiClient(http).capabilities() }
-                    .getOrElse { AiResult.Error(it.message ?: it::class.simpleName ?: "未知错误") }
-                when (outcome) {
-                    is AiResult.Ok -> if (outcome.value.enabled) {
-                        AiTestState.Ok(elapsedMs = null)
-                    } else {
-                        AiTestState.Failed(AiStr.serverDisabled())
-                    }
-                    is AiResult.Error -> AiTestState.Failed(outcome.message)
-                }
-            } else {
-                val outcome = runCatching { AiClient(http).testByokConnection() }
-                    .getOrElse { AiResult.Error(it.message ?: it::class.simpleName ?: "未知错误") }
-                when (outcome) {
-                    is AiResult.Ok -> AiTestState.Ok(elapsedMs = outcome.value)
-                    is AiResult.Error -> AiTestState.Failed(outcome.message)
-                }
+            val outcome = runCatching { AiClient(http).testByokConnection() }
+                .getOrElse { AiResult.Error(it.message ?: it::class.simpleName ?: "未知错误") }
+            testState = when (outcome) {
+                is AiResult.Ok -> AiTestState.Ok(elapsedMs = outcome.value)
+                is AiResult.Error -> AiTestState.Failed(outcome.message)
             }
         }
     }
@@ -202,70 +172,12 @@ fun AiFeaturesScreen(
                     end = horizontalPadding,
                     top = paddingValues.calculateTopPadding() +
                         CollapsibleTopAppBarDefaults.CollapsedHeight +
-                        pageTopExtra(isTablet, hasSmallTitle = true),
+                        pageTopExtra(isTablet, hasSmallTitle = false),
                     bottom = 120.dp,
                 ),
         ) {
-            SmallTitle(text = AiStr.freeQuota())
             Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                    val quota = capabilities?.quota
-                    when {
-                        loading -> Text(
-                            text = AiStr.quotaLoading(),
-                            style = MiuixTheme.textStyles.body2,
-                            color = theme.onSurfaceVariantSummary,
-                        )
-
-                        quota != null -> {
-                            QuotaLine(
-                                label = AiStr.quotaShrink(),
-                                used = quota.shrinkUsed,
-                                limit = quota.shrinkLimit,
-                            )
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 12.dp),
-                                thickness = 0.5.dp,
-                                color = theme.onSurfaceVariantActions.copy(alpha = 0.1f),
-                            )
-                            QuotaLine(
-                                label = AiStr.quotaAgent(),
-                                used = quota.agentUsed,
-                                limit = quota.agentLimit,
-                            )
-                        }
-
-                        else -> Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = if (quotaError != null) AiStr.quotaUnavailable() else AiStr.serverDisabled(),
-                                style = MiuixTheme.textStyles.body1,
-                                color = theme.onSurface,
-                            )
-                            quotaError?.let { message ->
-                                Text(
-                                    text = message,
-                                    style = MiuixTheme.textStyles.footnote2,
-                                    color = theme.onSurfaceVariantSummary,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
-                            }
-                            TextButton(
-                                text = AiStr.retry(),
-                                onClick = { reloadKey++ },
-                                modifier = Modifier
-                                    .padding(top = 8.dp)
-                                    .align(Alignment.Start),
-                            )
-                        }
-                    }
-                    Text(
-                        text = AiStr.quotaNote(),
-                        style = MiuixTheme.textStyles.footnote2,
-                        fontSize = 14.sp,
-                        color = theme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(top = 14.dp),
-                    )
-                }
+                FeatureRow(McpStr.entry(), McpStr.entrySummary(), onOpenMcp)
             }
 
             Spacer(modifier = Modifier.height(SECTION_GAP))
@@ -279,7 +191,6 @@ fun AiFeaturesScreen(
                             items = AiProviders.presets.map { preset ->
                                 DropdownItem(
                                     text = when {
-                                        AiProviders.isFree(preset.id) -> AiStr.providerFree()
                                         AiProviders.isCustom(preset.id) -> AiStr.providerCustom()
                                         else -> preset.label
                                     },
@@ -287,11 +198,7 @@ fun AiFeaturesScreen(
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                                         provider = preset.id
-                                        modelCustom = when {
-                                            AiProviders.isFree(preset.id) -> false
-                                            AiProviders.isCustom(preset.id) -> true
-                                            else -> false
-                                        }
+                                        modelCustom = AiProviders.isCustom(preset.id)
                                         if (preset.models.isNotEmpty()) {
                                             baseUrl = preset.baseUrl
                                             model = preset.defaultModel
@@ -314,16 +221,13 @@ fun AiFeaturesScreen(
                         color = theme.onSurfaceVariantActions.copy(alpha = 0.1f),
                     )
 
-                    // 免费额度与自填配置互斥：切换服务商时高度做展开/收起动画
-                    CardExpand(visible = isFreeProvider) {
-                        Text(
-                            text = AiStr.providerFreeNote(),
-                            fontSize = 13.sp,
-                            color = theme.onSurfaceVariantSummary,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
-                        )
-                    }
-                    CardExpand(visible = !isFreeProvider) {
+                    Text(
+                        text = AiStr.providerNote(),
+                        fontSize = 14.sp,
+                        color = theme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+                    )
+                    CardExpand(visible = true) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             // 自定义 / 预设两段都走展开动画：从预设切到自定义时接口地址不会突然出现
                             CardExpand(visible = isCustomProvider) {
@@ -430,11 +334,10 @@ fun AiFeaturesScreen(
                         text = when (status) {
                             AiTestState.Idle -> AiStr.testIdle()
                             AiTestState.Running -> AiStr.testingConnection()
-                            is AiTestState.Ok -> status.elapsedMs?.let { AiStr.testConnectionOk(it) }
-                                ?: AiStr.testServerOk()
+                            is AiTestState.Ok -> AiStr.testConnectionOk(status.elapsedMs ?: 0)
                             is AiTestState.Failed -> AiStr.testConnectionFailed(status.message)
                         },
-                        fontSize = if (status is AiTestState.Failed) 13.sp else 14.sp,
+                        fontSize = 17.sp,
                         color = when (status) {
                             is AiTestState.Ok -> theme.primary
                             is AiTestState.Failed -> theme.error
@@ -481,7 +384,7 @@ private sealed interface AiTestState {
     data object Idle : AiTestState
     data object Running : AiTestState
 
-    /** [elapsedMs] 为 null 表示免费额度（没有直连供应商） */
+    /** 连接测试耗时（毫秒）。 */
     data class Ok(val elapsedMs: Long?) : AiTestState
     data class Failed(val message: String) : AiTestState
 }
@@ -528,51 +431,6 @@ private fun InlineInputRow(
 }
 
 @Composable
-private fun QuotaLine(label: String, used: Int, limit: Int) {
-    val theme = MiuixTheme.colorScheme
-    val fraction = if (limit > 0) (used.toFloat() / limit).coerceIn(0f, 1f) else 0f
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = theme.onSurface,
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = AiStr.quotaRemaining((limit - used).coerceAtLeast(0)),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = theme.primary,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .height(4.dp)
-                .background(theme.onSurfaceVariantActions.copy(alpha = 0.12f), ContinuousCapsule()),
-        ) {
-            if (fraction > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(fraction)
-                        .height(4.dp)
-                        .background(theme.primary, ContinuousCapsule()),
-                )
-            }
-        }
-        Text(
-            text = AiStr.quotaUsed(used, limit),
-            style = MiuixTheme.textStyles.footnote2,
-            color = theme.onSurfaceVariantSummary,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-    }
-}
-
-@Composable
 private fun FeatureRow(title: String, summary: String, onClick: () -> Unit) {
     val theme = MiuixTheme.colorScheme
     Row(
@@ -591,7 +449,7 @@ private fun FeatureRow(title: String, summary: String, onClick: () -> Unit) {
             )
             Text(
                 text = summary,
-                fontSize = 13.sp,
+                fontSize = 14.sp,
                 color = theme.onSurfaceVariantSummary,
                 modifier = Modifier.padding(top = 2.dp),
             )

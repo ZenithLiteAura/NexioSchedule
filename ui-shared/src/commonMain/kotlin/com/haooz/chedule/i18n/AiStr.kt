@@ -1,30 +1,16 @@
 package com.haooz.chedule.i18n
 
-/** 「AI 功能」页：免费额度、自带服务商设置与功能入口。 */
+/** 「AI 功能」页：自带服务商设置与功能入口（免费额度已移除）。 */
 object AiStr {
 
-    val freeQuota = L("免费额度", "Free Quota")
-    val quotaShrink = L("通知精简", "Notification labels")
-    val quotaAgent = L("AI 教务导入", "Academic import")
-    val quotaUsed = L("今天已用 %d / %d 次", "%d of %d used today")
-    val quotaRemaining = L("剩余 %d 次", "%d left")
-    val quotaNote = L(
-        "每天 0 点重置；使用其它服务商不用免费额度",
-        "Resets at midnight. Using your own provider does not consume free quota.",
+    val providerNote = L(
+        "AI 功能需要你自己的模型服务商；API key 只保存在本机",
+        "AI features require your own model provider; the API key stays on this device.",
     )
-    val quotaLoading = L("正在读取额度…", "Loading quota…")
-    val quotaUnavailable = L("暂时拿不到额度信息", "Quota is unavailable right now")
-    val retry = L("重试", "Retry")
-    val serverDisabled = L("Nexio 免费 AI 暂未启用", "Nexio free AI is not enabled")
 
     val byokSection = L("模型服务商", "Model Provider")
     val providerLabel = L("服务商", "Provider")
-    val providerFree = L("每日免费 AI", "Free daily AI")
     val providerCustom = L("自定义", "Custom")
-    val providerFreeNote = L(
-        "当前使用 Nexio 免费额度，无需填写 apikey",
-        "Nexio's free quota is in use. No API key is required.",
-    )
     val byokBaseUrl = L("接口地址", "Base URL")
     val byokBaseUrlHint = L("https://…/v1", "https://…/v1")
     val byokModel = L("模型名", "Model")
@@ -40,7 +26,6 @@ object AiStr {
     val testIdle = L("尚未测试", "Not tested yet")
     val testingConnection = L("测试中…", "Testing…")
     val testConnectionOk = L("连接正常，耗时 %d ms", "Connected in %d ms")
-    val testServerOk = L("Nexio 免费 AI 可用", "Nexio free AI is available")
     val testConnectionFailed = L("连接失败：%s", "Connection failed: %s")
 
     val features = L("功能入口", "Features")

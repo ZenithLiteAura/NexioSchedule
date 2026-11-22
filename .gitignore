@@ -50,11 +50,6 @@ temp_*/
 androidApp/src/main/assets/eduloader/school_index.pb
 androidApp/src/main/assets/eduloader/school_index_ai.json
 
-# --- 本地 release 签名材料（绝不入库） ---
-*.jks
-*.keystore
-keystore.properties
-
 # --- 工作助手本地目录 ---
 .workbuddy/
 .workbuddy-ai/
